@@ -59,5 +59,5 @@ export const api={
  notifications:()=>request<{total:number;notificacoes:NotificationItem[]}>('/notificacoes'),
  notificationPreferences:()=>request<any>('/notificacoes/preferencias'),
  saveNotificationPreferences:(d:any)=>request<any>('/notificacoes/preferencias',{method:'PATCH',body:JSON.stringify(d)}),
- assistantInsights:()=>request<any>('/assistente/insights'),assistantHistory:()=>request<any>('/assistente/historico'),assistantAsk:(pergunta:string)=>post<any>('/assistente/perguntar',{pergunta})
+ assistantInsights:()=>request<any>('/assistente/insights'),assistantHistory:()=>request<any>('/assistente/historico'),assistantAsk:(pergunta:string)=>post('/assistente/perguntar',{pergunta})
 };
