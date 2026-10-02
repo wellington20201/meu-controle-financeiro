@@ -1,0 +1,13 @@
+{
+  "name":"Meu Controle Financeiro",
+  "short_name":"Meu Financeiro",
+  "start_url":"/",
+  "display":"standalone",
+  "background_color":"#F5F3ED",
+  "theme_color":"#F5F3ED",
+  "lang":"pt-BR",
+  "description":"Sua vida financeira, sem complicação.",
+  "orientation":"portrait-primary",
+  "categories":["finance","productivity"],
+  "icons":[]
+}
