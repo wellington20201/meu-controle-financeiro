@@ -17,6 +17,7 @@ const periodicidades = ['semanal','quinzenal','mensal','bimestral','trimestral',
 
 const n=(v:any)=>Number(v||0);
 const money=(v:any)=>Math.round(n(v)*100)/100;
+const brl=(v:any)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(n(v));
 const dateOnly=(d:any)=>d instanceof Date?d.toISOString().slice(0,10):String(d).slice(0,10);
 const addPeriod=(base:Date,period:string)=>{const d=new Date(base); if(period==='semanal') d.setDate(d.getDate()+7); else if(period==='quinzenal') d.setDate(d.getDate()+14); else if(period==='mensal') d.setMonth(d.getMonth()+1); else if(period==='bimestral') d.setMonth(d.getMonth()+2); else if(period==='trimestral') d.setMonth(d.getMonth()+3); else if(period==='semestral') d.setMonth(d.getMonth()+6); else if(period==='anual') d.setFullYear(d.getFullYear()+1); else d.setDate(d.getDate()+30); return d;};
 const clampDay=(year:number,month:number,day:number)=>{const last=new Date(year,month+1,0).getDate();return Math.min(Math.max(1,day||1),last)};
@@ -67,8 +68,8 @@ export async function buildApp(){
 
   app.setErrorHandler((error,req,rep)=>{
     req.log.error({err:error},'request_failed');
-    if(error.message==='UNAUTHORIZED') return rep.code(401).send({message:'Sessão inválida ou expirada'});
-    if(error.message==='CSRF_INVALID') return rep.code(403).send({message:'Validação de segurança inválida. Atualize a página e tente novamente.'});
+    if((error as any).message==='UNAUTHORIZED') return rep.code(401).send({message:'Sessão inválida ou expirada'});
+    if((error as any).message==='CSRF_INVALID') return rep.code(403).send({message:'Validação de segurança inválida. Atualize a página e tente novamente.'});
     if((error as any).code==='23505') return rep.code(409).send({message:'Esse dado já está cadastrado.'});
     return rep.code(500).send({message:'Não foi possível concluir a operação'});
   });
@@ -79,7 +80,7 @@ export async function buildApp(){
     if(publicPaths.has(requestPath) || requestPath.startsWith('/api/')===false || req.method==='OPTIONS') return;
     await authenticate(req,rep);
     await requireCsrf(req);
-    securityContext.enterWith({ userId: req.userId });
+    securityContext.enterWith({ userId: (req as any).userId });
   });
 
   const audit=async(req:any,event:string,success=true,userId:string|null=null,details:any={})=>{
@@ -379,7 +380,7 @@ export async function buildApp(){
     const capacidade=Math.max(0,avgIn-avgOut), patrimonio=Number(accounts.rows[0]?.total||0)+Number(investments.rows[0]?.total||0);
     const metaInsights=goals.rows.map(g=>{const restante=Math.max(0,Number(g.valor_objetivo)-Number(g.valor_atual));const meses=g.data_limite?Math.max(1,(new Date(g.data_limite).getTime()-Date.now())/(30.44*86400000)):null;return {...g,restante,aporte_necessario:meses?restante/meses:null};});
     const cenarios=[{nome:'Conservador',aporte:capacidade*.7},{nome:'Atual',aporte:capacidade},{nome:'Acelerado',aporte:capacidade*1.3}];
-    const notas=[]; if(capacidade>0)notas.push(`Sua capacidade média estimada de poupança é de R$ ${capacidade.toFixed(2)} por mês.`); else notas.push('Os últimos meses não mostram capacidade média positiva de poupança.'); if(Number(investments.rows[0]?.ganho||0)>0)notas.push('Seus investimentos apresentam resultado acumulado positivo com base nos valores registrados.'); if(upcoming.rows.length)notas.push(`${upcoming.rows.length} compromisso(s) financeiro(s) estão previstos para os próximos 30 dias.`);
+    const notas:any[]=[]; if(capacidade>0)notas.push(`Sua capacidade média estimada de poupança é de R$ ${capacidade.toFixed(2)} por mês.`); else notas.push('Os últimos meses não mostram capacidade média positiva de poupança.'); if(Number(investments.rows[0]?.ganho||0)>0)notas.push('Seus investimentos apresentam resultado acumulado positivo com base nos valores registrados.'); if(upcoming.rows.length)notas.push(`${upcoming.rows.length} compromisso(s) financeiro(s) estão previstos para os próximos 30 dias.`);
     return {periodo_meses:ms.length,meses:ms,medias:{entradas:avgIn,saidas:avgOut,capacidade},patrimonio:{contas:patrimonio-Number(investments.rows[0]?.total||0),investimentos:Number(investments.rows[0]?.total||0),total:patrimonio,ganho_investimentos:Number(investments.rows[0]?.ganho||0)},metas:metaInsights,cenarios:cenarios.map(c=>({...c,patrimonio_12_meses:patrimonio+c.aporte*12})),proximos30:upcoming.rows.map(r=>({...r,valor:Number(r.valor||0)})),categorias:categories.rows.map(r=>({...r,total:Number(r.total||0)})),padroes:memory.rows.map(r=>({...r,media_valor:Number(r.media_valor||0),confianca:Number(r.confianca||0)})),notas};
   });
 
@@ -453,7 +454,7 @@ export async function buildApp(){
     const committed=await query(`SELECT COALESCE(SUM(p.valor),0) total FROM parcelas_cartao p JOIN compras_cartao cc ON cc.id=p.compra_id WHERE cc.cartao_id=$1 AND p.status='aberta'`,[card.id]);
     const current=n(committed.rows[0].total),available=card.limite===null?null:n(card.limite)-current;
     if(available!==null&&total>available)return rep.code(409).send({message:'Compra ultrapassa o limite disponível',disponivel:money(available)});
-    const base=Math.round((total/parcelas)*100)/100;const first=new Date(`${b.data_compra}T12:00:00`);const preview=[];
+    const base=Math.round((total/parcelas)*100)/100;const first=new Date(`${b.data_compra}T12:00:00`);const preview:any[]=[];
     for(let i=1;i<=parcelas;i++){const due=new Date(first);due.setMonth(due.getMonth()+i);if(card.dia_vencimento)due.setDate(Math.min(card.dia_vencimento,28));const value=i===parcelas?money(total-base*(parcelas-1)):base;preview.push({numero:i,total_parcelas:parcelas,valor:value,data_vencimento:due.toISOString().slice(0,10)});}
     return {cartao:{id:card.id,nome:card.nome,limite:card.limite===null?null:n(card.limite),comprometido:money(current),disponivel:available===null?null:money(available-total)},compra:{descricao:b.descricao||'',valor_total:money(total),numero_parcelas:parcelas,data_compra:b.data_compra},parcelas:preview,cria_compromisso:true};
   });
