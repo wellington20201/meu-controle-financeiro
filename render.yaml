@@ -58,6 +58,6 @@ services:
 databases:
   - name: meu-controle-financeiro-db
     plan: free
-    postgresMajorVersion: '17'
+    postgresMajorVersion: '18'
     databaseName: meu_controle
     user: meu_controle
