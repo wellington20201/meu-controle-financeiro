@@ -1,0 +1,63 @@
+services:
+  - type: web
+    name: meu-controle-financeiro
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    preDeployCommand: node scripts/apply-migrations.mjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: '3333'
+      - key: DATABASE_URL
+        fromDatabase:
+          name: meu-controle-financeiro-db
+          property: connectionString
+      - key: CORS_ORIGIN
+        fromService:
+          name: meu-controle-financeiro
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: FRONTEND_URL
+        fromService:
+          name: meu-controle-financeiro
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: COOKIE_SECURE
+        value: 'true'
+      - key: COOKIE_SAME_SITE
+        value: lax
+      - key: TRUST_PROXY
+        value: 'true'
+      - key: MFA_ENCRYPTION_KEY
+        generateValue: true
+      - key: PASSWORD_RESET_MINUTES
+        value: '30'
+      - key: UPLOAD_DIR
+        value: /var/data/private-uploads
+      - key: MAX_UPLOAD_BYTES
+        value: '10485760'
+      - key: DB_SSL
+        value: 'true'
+      - key: DB_SSL_REJECT_UNAUTHORIZED
+        value: 'true'
+      - key: DB_POOL_MAX
+        value: '10'
+      - key: DB_IDLE_TIMEOUT_MS
+        value: '30000'
+      - key: DB_CONNECTION_TIMEOUT_MS
+        value: '5000'
+    disk:
+      name: private-uploads
+      mountPath: /var/data
+      sizeGB: 1
+
+databases:
+  - name: meu-controle-financeiro-db
+    plan: free
+    postgresMajorVersion: '17'
+    databaseName: meu_controle
+    user: meu_controle
