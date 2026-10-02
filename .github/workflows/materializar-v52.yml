@@ -19,16 +19,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ZIP=$(find . -maxdepth 1 -type f -name 'Meu Controle Financeiro - completo V5.2*.zip' | head -n 1)
+          ZIP=$(find . -maxdepth 1 -type f -name 'Meu Controle Financeiro - completo V5.2*.zip' -print -quit)
           test -n "$ZIP"
           rm -rf /tmp/mcf
           mkdir -p /tmp/mcf
           unzip -q "$ZIP" -d /tmp/mcf
-          ROOT=$(find /tmp/mcf -maxdepth 2 -type f -name Dockerfile -printf '%h\n' | head -n 1)
-          test -n "$ROOT"
+
+          FRONTEND=$(find /tmp/mcf -type d -name frontend -print -quit)
+          test -n "$FRONTEND"
+          ROOT=$(dirname "$FRONTEND")
+
+          test -f "$ROOT/Dockerfile"
           test -d "$ROOT/frontend"
           test -d "$ROOT/backend"
           test -d "$ROOT/database"
+          test -f "$ROOT/render.yaml"
+
           cp -a "$ROOT"/. ./
           rm -f ./*.zip
           rm -rf ./__MACOSX
@@ -43,6 +49,8 @@ jobs:
           test -d frontend
           test -d backend
           test -d database
+          test -f frontend/package.json
+          test -f backend/package.json
           echo 'Estrutura V5.2 materializada com sucesso.'
 
       - name: Commit da materialização
