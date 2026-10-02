@@ -43,7 +43,7 @@ services:
       - key: DB_SSL
         value: 'true'
       - key: DB_SSL_REJECT_UNAUTHORIZED
-        value: 'true'
+        value: 'false'
       - key: DB_POOL_MAX
         value: '10'
       - key: DB_IDLE_TIMEOUT_MS
