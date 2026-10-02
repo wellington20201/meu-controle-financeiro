@@ -1,0 +1,57 @@
+name: Materializar V5.2
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  materializar:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extrair pacote V5.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP=$(find . -maxdepth 1 -type f -name 'Meu Controle Financeiro - completo V5.2*.zip' | head -n 1)
+          test -n "$ZIP"
+          rm -rf /tmp/mcf
+          mkdir -p /tmp/mcf
+          unzip -q "$ZIP" -d /tmp/mcf
+          ROOT=$(find /tmp/mcf -maxdepth 2 -type f -name Dockerfile -printf '%h\n' | head -n 1)
+          test -n "$ROOT"
+          test -d "$ROOT/frontend"
+          test -d "$ROOT/backend"
+          test -d "$ROOT/database"
+          cp -a "$ROOT"/. ./
+          rm -f ./*.zip
+          rm -rf ./__MACOSX
+          rm -rf /tmp/mcf
+
+      - name: Verificar estrutura
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f Dockerfile
+          test -f render.yaml
+          test -d frontend
+          test -d backend
+          test -d database
+          echo 'Estrutura V5.2 materializada com sucesso.'
+
+      - name: Commit da materialização
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git status --short
+          git commit -m 'chore: materializa V5.2 [skip ci]' || echo 'Nenhuma alteração para commitar.'
+          git push
