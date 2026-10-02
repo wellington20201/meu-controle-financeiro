@@ -25,4 +25,4 @@ COPY --from=frontend-build /src/frontend/dist ./public
 COPY database ./database
 COPY backend/scripts/apply-migrations.mjs ./scripts/apply-migrations.mjs
 EXPOSE 3333
-CMD ["node", "dist/server.js"]
+CMD ["sh", "-c", "node scripts/apply-migrations.mjs && node dist/server.js"]
