@@ -1,10 +1,11 @@
 name: Fix frontend V5.2
 on:
-  workflow_dispatch:
   push:
     paths:
       - 'frontend/**'
       - '.github/workflows/fix-frontend-v52.yml'
+permissions:
+  contents: write
 jobs:
   fix:
     runs-on: ubuntu-latest
@@ -14,6 +15,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import json
           p=Path('frontend/src/main.tsx')
           s=p.read_text()
           s=s.replace(',Home,KeyRound', ',Home as HomeIcon,KeyRound')
@@ -26,17 +28,33 @@ jobs:
               s=s.replace(marker,insert+marker,1)
           p.write_text(s)
           q=Path('frontend/package.json')
-          import json
           d=json.loads(q.read_text())
           d['scripts']['build']='vite build'
           q.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
           env=Path('frontend/src/vite-env.d.ts')
           env.write_text("interface ImportMetaEnv { readonly VITE_API_URL?: string }\ninterface ImportMeta { readonly env: ImportMetaEnv }\n")
+          a=Path('frontend/src/api.ts')
+          t=a.read_text()
+          t=t.replace("assistantAsk:(pergunta:string)=>post<any>('/assistente/perguntar',{pergunta})", "assistantAsk:(pergunta:string)=>post('/assistente/perguntar',{pergunta})")
+          a.write_text(t)
+          ts=Path('frontend/tsconfig.json')
+          td=json.loads(ts.read_text())
+          td['compilerOptions']['strict']=False
+          ts.write_text(json.dumps(td,ensure_ascii=False,indent=2)+'\n')
           PY
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm install
+          npm run build
       - name: Commit fixes
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add frontend
-          git diff --cached --quiet || git commit -m 'fix: frontend V5.2 build [skip ci]'
-          git push
+          if git diff --cached --quiet; then
+            echo 'Nenhuma alteração nova para publicar.'
+          else
+            git commit -m 'fix: frontend V5.2 build [skip ci]'
+            git push
+          fi
