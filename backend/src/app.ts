@@ -75,17 +75,12 @@ export async function buildApp(){
   });
 
   const publicPaths=new Set(['/api/auth/register','/api/auth/login','/api/auth/mfa/verify','/api/auth/recuperar-senha','/api/auth/redefinir-senha','/health','/health/database']);
-  app.addHook('onRequest',(req,rep,done)=>{
+  app.addHook('preHandler',async(req,rep)=>{
     const requestPath=req.url.split('?')[0];
-    if(publicPaths.has(requestPath) || requestPath.startsWith('/api/')===false || req.method==='OPTIONS') return done();
-    (async()=>{
-      try{
-        await authenticate(req,rep);
-        await requireCsrf(req);
-        const uid=(req as any).userId as string;
-        securityContext.run({userId:uid},()=>done());
-      }catch(error){ done(error as Error); }
-    })();
+    if(publicPaths.has(requestPath) || requestPath.startsWith('/api/')===false || req.method==='OPTIONS') return;
+    await authenticate(req,rep);
+    await requireCsrf(req);
+    securityContext.enterWith({ userId: (req as any).userId });
   });
 
   const audit=async(req:any,event:string,success=true,userId:string|null=null,details:any={})=>{
@@ -302,21 +297,11 @@ export async function buildApp(){
   // Contas e lançamentos
   app.get('/api/contas',async(req:any)=>{
     const id=userId(req);
-    const rows=(await query(`
-      SELECT c.id,c.nome,c.tipo,c.saldo_inicial,c.ativa,
-        COALESCE((SELECT SUM(CASE WHEN l.tipo='receita' THEN l.valor WHEN l.tipo='despesa' THEN -l.valor ELSE 0 END)
-                  FROM lancamentos l
-                  WHERE l.conta_id=c.id AND l.usuario_id=$1 AND l.status='pago' AND l.forma_pagamento <> 'transferencia'),0)
-        + COALESCE((SELECT SUM(CASE WHEN t.conta_destino_id=c.id THEN t.valor WHEN t.conta_origem_id=c.id THEN -t.valor ELSE 0 END)
-                    FROM transferencias t
-                    WHERE t.usuario_id=$1 AND (t.conta_destino_id=c.id OR t.conta_origem_id=c.id)),0) AS saldo_movimentacoes
-      FROM contas c
-      WHERE c.usuario_id=$1
-      GROUP BY c.id
-      ORDER BY c.ativa DESC,c.nome`,[id])).rows;
-    return rows.map(x=>({...x,saldo_inicial:n(x.saldo_inicial),saldo_atual:money(n(x.saldo_inicial)+n(x.saldo_movimentacoes))}));
+    return (await query(`
+      SELECT c.*, COALESCE(SUM(CASE WHEN l.status='pago' AND l.tipo='receita' AND l.forma_pagamento <> 'transferencia' THEN l.valor WHEN l.status='pago' AND l.tipo='despesa' AND l.forma_pagamento <> 'transferencia' THEN -l.valor ELSE 0 END),0) AS saldo_atual
+      FROM contas c LEFT JOIN lancamentos l ON l.conta_id=c.id
+      WHERE c.usuario_id=$1 GROUP BY c.id ORDER BY c.ativa DESC,c.nome`,[id])).rows.map(x=>({...x,saldo_inicial:n(x.saldo_inicial),saldo_atual:money(n(x.saldo_inicial)+n(x.saldo_atual))}));
   });
-
   app.post('/api/contas',async(req:any,rep)=>{const id=userId(req),b=req.body||{};if(!b.nome)return rep.code(400).send({message:'Nome da conta é obrigatório'});const r=await query(`INSERT INTO contas(usuario_id,nome,tipo,saldo_inicial) VALUES($1,$2,$3,$4) RETURNING *`,[id,b.nome,b.tipo||'corrente',n(b.saldo_inicial)]);return rep.code(201).send(r.rows[0])});
   app.patch('/api/contas/:id',async(req:any)=>{const id=userId(req),b=req.body||{};const r=await query(`UPDATE contas SET nome=COALESCE($1,nome),tipo=COALESCE($2,tipo),ativa=COALESCE($3,ativa),atualizado_em=now() WHERE id=$4 AND usuario_id=$5 RETURNING *`,[b.nome,b.tipo,b.ativa,req.params.id,id]);return r.rows[0]});
   app.delete('/api/contas/:id',async(req:any)=>{const id=userId(req);await query(`UPDATE contas SET ativa=false,atualizado_em=now() WHERE id=$1 AND usuario_id=$2`,[req.params.id,id]);return {ok:true}});
@@ -382,7 +367,7 @@ export async function buildApp(){
       query(`SELECT to_char(date_trunc('month',data_movimento),'YYYY-MM') mes, COALESCE(SUM(CASE WHEN tipo='receita' THEN valor ELSE 0 END),0) entradas, COALESCE(SUM(CASE WHEN tipo='despesa' THEN valor ELSE 0 END),0) saidas, COUNT(*) qtd FROM lancamentos WHERE usuario_id=$1 AND status='pago' AND forma_pagamento <> 'transferencia' AND data_movimento >= date_trunc('month',CURRENT_DATE)-($2::int-1)*interval '1 month' GROUP BY 1 ORDER BY 1`,[id,meses]),
       query(`SELECT COALESCE(cat.nome,'Sem categoria') categoria, COALESCE(SUM(l.valor),0) total, COUNT(*) qtd FROM lancamentos l LEFT JOIN categorias cat ON cat.id=l.categoria_id WHERE l.usuario_id=$1 AND l.tipo='despesa' AND l.status='pago' AND l.forma_pagamento <> 'transferencia' AND data_movimento >= date_trunc('month',CURRENT_DATE)-interval '11 months' GROUP BY 1 ORDER BY total DESC`,[id]),
       query(`SELECT c.id,c.nome,c.tipo,c.saldo_inicial,COALESCE(SUM(CASE WHEN l.status='pago' AND l.tipo='receita' AND l.forma_pagamento <> 'transferencia' THEN l.valor WHEN l.status='pago' AND l.tipo='despesa' AND l.forma_pagamento <> 'transferencia' THEN -l.valor ELSE 0 END),0)+c.saldo_inicial saldo_atual FROM contas c LEFT JOIN lancamentos l ON l.conta_id=c.id WHERE c.usuario_id=$1 AND c.ativa=true GROUP BY c.id ORDER BY saldo_atual DESC`,[id]),
-      query(`SELECT c.id,c.nome,c.limite,COALESCE((SELECT SUM(p.valor) FROM compras_cartao cc JOIN parcelas_cartao p ON p.compra_id=cc.id WHERE cc.cartao_id=c.id AND p.status='aberta'),0) comprometido,CASE WHEN c.limite IS NULL THEN NULL ELSE c.limite-COALESCE((SELECT SUM(p.valor) FROM compras_cartao cc JOIN parcelas_cartao p ON p.compra_id=cc.id WHERE cc.cartao_id=c.id AND p.status='aberta'),0) END disponivel FROM cartoes c WHERE c.usuario_id=$1 AND c.ativo=true ORDER BY c.nome`,[id]),
+      query(`SELECT id,nome,limite,comprometido,disponivel FROM cartoes WHERE usuario_id=$1 AND ativo=true ORDER BY nome`,[id]),
       query(`SELECT id,nome,valor_objetivo,valor_atual,data_limite,status FROM metas WHERE usuario_id=$1 ORDER BY data_limite NULLS LAST,nome`,[id]),
       query(`SELECT COALESCE(SUM(CASE WHEN tipo='receita' THEN valor ELSE 0 END),0) entradas,COALESCE(SUM(CASE WHEN tipo='despesa' THEN valor ELSE 0 END),0) saidas,COUNT(*) qtd FROM lancamentos WHERE usuario_id=$1 AND status='pago' AND forma_pagamento <> 'transferencia' AND date_trunc('month',data_movimento)=date_trunc('month',CURRENT_DATE)`,[id])
     ]);
@@ -535,8 +520,8 @@ export async function buildApp(){
   app.delete('/api/dividas/:id',async(req:any,rep)=>{const id=userId(req),b=req.body||{};if(b.confirmado!==true)return rep.code(400).send({message:'Confirmação explícita necessária'});const r=await query(`UPDATE dividas SET ativa=false,atualizado_em=now() WHERE id=$1 AND usuario_id=$2 RETURNING id`,[req.params.id,id]);if(!r.rowCount)return rep.code(404).send({message:'Dívida não encontrada'});return {ok:true}});
 
   // Memória e insights
-  app.get('/api/memoria',async(req:any)=>{const id=userId(req);return (await query(`SELECT * FROM memoria_financeira WHERE usuario_id=$1 ORDER BY quantidade_ocorrencias DESC`,[id])).rows});
-  app.get('/api/insights',async(req:any)=>{const id=userId(req);const r=await query(`SELECT * FROM memoria_financeira WHERE usuario_id=$1 AND recorrencia_detectada=true ORDER BY confianca DESC LIMIT 10`,[id]);return {suggestions:r.rows.map(x=>({id:x.id,descricao:x.descricao_normalizada,ocorrencias:x.quantidade_ocorrencias,media:n(x.media_valor),confianca:n(x.confianca),mensagem:`Percebi um padrão em ${x.quantidade_ocorrencias} lançamentos semelhantes. Vale conferir se isso pode virar uma conta recorrente?`}))}});
+  app.get('/api/memoria',async(req:any)=>{const id=userId(req);return (await query(`SELECT * FROM memoria_financeira WHERE usuario_id=$1 ORDER BY ocorrencias DESC`,[id])).rows});
+  app.get('/api/insights',async(req:any)=>{const id=userId(req);const r=await query(`SELECT * FROM memoria_financeira WHERE usuario_id=$1 AND recorrencia_detectada=true ORDER BY confianca DESC LIMIT 10`,[id]);return {suggestions:r.rows.map(x=>({id:x.id,descricao:x.descricao_normalizada,ocorrencias:x.ocorrencias,media:n(x.media_valor),confianca:n(x.confianca),mensagem:`Percebi um padrão em ${x.quantidade_ocorrencias} lançamentos semelhantes. Vale conferir se isso pode virar uma conta recorrente?`}))}});
 
   // Anexos V2.5: upload real em armazenamento privado, nome gerado pelo servidor, validação por assinatura e acesso autorizado.
   app.get('/api/documentos/analise/:id',async(req:any,rep)=>{
