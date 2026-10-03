@@ -1,0 +1,115 @@
+name: Feature transactions and mascot
+on:
+  push:
+    branches: [main]
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch backend and frontend
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          # Backend: expose IDs for editing and add protected update/delete routes.
+          p=Path('backend/src/app.ts')
+          s=p.read_text()
+          old="SELECT l.*,c.nome AS conta_nome,cat.nome AS categoria_nome FROM lancamentos l JOIN contas c ON c.id=l.conta_id LEFT JOIN categorias cat ON cat.id=l.categoria_id WHERE l.usuario_id=$1 ORDER BY data_movimento DESC,criado_em DESC"
+          new="SELECT l.*,c.nome AS conta_nome,cat.nome AS categoria_nome FROM lancamentos l JOIN contas c ON c.id=l.conta_id LEFT JOIN categorias cat ON cat.id=l.categoria_id WHERE l.usuario_id=$1 ORDER BY data_movimento DESC,criado_em DESC"
+          if old not in s:
+              raise SystemExit('transactions GET query marker not found')
+          marker="  app.get('/api/lancamentos/sugestoes',async(req:any)=>{"
+          if marker not in s:
+              raise SystemExit('transactions suggestions marker not found')
+          routes=r'''  app.patch('/api/lancamentos/:id',async(req:any,rep)=>{
+    const id=userId(req); const txId=String((req.params as any).id||''); const b=req.body||{};
+    const current=await query(`SELECT * FROM lancamentos WHERE id=$1 AND usuario_id=$2`,[txId,id]);
+    if(!current.rowCount) return rep.code(404).send({message:'Lançamento não encontrado'});
+    if(b.conta_id){const own=await query(`SELECT id FROM contas WHERE id=$1 AND usuario_id=$2 AND ativa=true`,[b.conta_id,id]);if(!own.rowCount)return rep.code(404).send({message:'Conta não encontrada'});}
+    if(b.categoria_id){const cat=await query(`SELECT id FROM categorias WHERE id=$1 AND ativa=true AND (usuario_id=$2 OR usuario_id IS NULL)`,[b.categoria_id,id]);if(!cat.rowCount)return rep.code(404).send({message:'Categoria não encontrada'});}
+    const x=current.rows[0];
+    const tipo=['receita','despesa','transferencia'].includes(b.tipo)?b.tipo:x.tipo;
+    const valor=b.valor!==undefined?money(b.valor):n(x.valor);
+    if(valor<=0)return rep.code(400).send({message:'O valor precisa ser maior que zero.'});
+    const r=await query(`UPDATE lancamentos SET conta_id=COALESCE($1,conta_id),categoria_id=CASE WHEN $2::text IS NULL THEN categoria_id ELSE $2::uuid END,tipo=$3,valor=$4,descricao=COALESCE($5,descricao),data_movimento=COALESCE($6::date,data_movimento),status=COALESCE($7,status),forma_pagamento=COALESCE($8,forma_pagamento),observacao=COALESCE($9,observacao),atualizado_em=now() WHERE id=$10 AND usuario_id=$11 RETURNING *`,[b.conta_id||null,b.categoria_id===undefined?null:(b.categoria_id||null),tipo,valor,b.descricao||null,b.data_movimento||null,b.status||null,b.forma_pagamento||null,b.observacao||null,txId,id]);
+    await audit(req,'LANCAMENTO_EDITADO',true,id,{lancamento_id:txId});
+    return r.rows[0];
+  });
+
+  app.delete('/api/lancamentos/:id',async(req:any,rep)=>{
+    const id=userId(req); const txId=String((req.params as any).id||'');
+    const r=await query(`DELETE FROM lancamentos WHERE id=$1 AND usuario_id=$2 RETURNING id,descricao,valor`,[txId,id]);
+    if(!r.rowCount)return rep.code(404).send({message:'Lançamento não encontrado'});
+    await audit(req,'LANCAMENTO_EXCLUIDO',true,id,{lancamento_id:txId,valor:r.rows[0].valor});
+    return {ok:true,id:txId};
+  });
+
+'''
+          s=s.replace(marker,routes+marker,1)
+          p.write_text(s)
+
+          # API: edit/delete transaction helpers and richer transaction type.
+          p=Path('frontend/src/api.ts'); s=p.read_text()
+          s=s.replace("export type Transaction={id:string;tipo:'receita'|'despesa'|'transferencia';valor:number;descricao:string;data_movimento:string;status:string;conta_nome?:string;categoria_nome?:string;forma_pagamento?:string};","export type Transaction={id:string;tipo:'receita'|'despesa'|'transferencia';valor:number;descricao:string;data_movimento:string;status:string;conta_id?:string;categoria_id?:string;conta_nome?:string;categoria_nome?:string;forma_pagamento?:string;observacao?:string};")
+          s=s.replace("createTransaction:(d:any)=>post('/lancamentos',d),","createTransaction:(d:any)=>post('/lancamentos',d),updateTransaction:(id:string,d:any)=>request<Transaction>(`/lancamentos/${id}`,{method:'PATCH',body:JSON.stringify(d)}),deleteTransaction:(id:string)=>request(`/lancamentos/${id}`,{method:'DELETE',body:JSON.stringify({})}),")
+          p.write_text(s)
+
+          # Frontend: replace transaction history with actions and edit modal.
+          p=Path('frontend/src/main.tsx'); s=p.read_text()
+          start=s.find('function TransactionsPage(){')
+          end=s.find('function TransactionModal(',start)
+          if start<0 or end<0: raise SystemExit('transaction page markers not found')
+          block=r'''function TransactionsPage(){
+ const [items,setItems]=useState<Transaction[]>([]),[q,setQ]=useState(''),[filter,setFilter]=useState('todos'),[show,setShow]=useState(false),[editing,setEditing]=useState<Transaction|null>(null),[error,setError]=useState('');
+ const load=()=>api.transactions().then(setItems).catch(e=>setError(e instanceof Error?e.message:'Não foi possível carregar os lançamentos'));
+ useEffect(()=>{load()},[]);
+ const remove=async(x:Transaction)=>{if(!window.confirm(`Excluir o lançamento "${x.descricao}" de ${brl(x.valor)}?\n\nEssa ação também altera o saldo da conta.`))return;try{await api.deleteTransaction(x.id);await load()}catch(e){setError(e instanceof Error?e.message:'Não foi possível excluir')}};
+ const filtered=items.filter(x=>(filter==='todos'||x.tipo===filter)&&(!q||`${x.descricao} ${x.categoria_nome||''} ${x.conta_nome||''}`.toLowerCase().includes(q.toLowerCase())));
+ return <section className="page-section"><PageHeader eyebrow="HISTÓRICO" title="Lançamentos" text="Tudo que já aconteceu com seu dinheiro, em um só lugar." action={<button className="primary-btn" onClick={()=>setShow(true)}><Plus size={16}/> Novo lançamento</button>}/>{error&&<div className="form-error" style={{marginBottom:12}}>{error}</div>}<div className="toolbar"><div className="search-box"><Search size={16}/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar lançamentos..."/></div><div className="filter-pills">{[['todos','Todos'],['despesa','Despesas'],['receita','Receitas']].map(([v,l])=><button key={v} className={filter===v?'selected':''} onClick={()=>setFilter(v)}>{l}</button>)}</div></div><div className="panel table-panel">{filtered.length?filtered.map(x=><div className="transaction-row" key={x.id}><div className={`row-icon ${x.tipo==='receita'?'income-bg':'expense-bg'}`}>{x.tipo==='receita'?<ArrowDownLeft size={16}/>:<ArrowUpRight size={16}/>}</div><div className="tx-main"><strong>{x.descricao}</strong><small>{x.categoria_nome||'Sem categoria'} · {x.conta_nome||'Conta'} · {x.status==='pago'?'Pago':'Pendente'}</small></div><div className="tx-date">{dateBR(x.data_movimento)}</div><strong className={x.tipo==='receita'?'positive':'negative'}>{x.tipo==='receita'?'+':'-'} {brl(x.valor)}</strong><div className="tx-actions"><button className="icon-btn" title="Editar lançamento" onClick={()=>setEditing(x)}><Settings size={15}/></button><button className="icon-btn danger-icon" title="Excluir lançamento" onClick={()=>remove(x)}><Trash2 size={15}/></button></div></div>):<div className="empty-state">Nenhum lançamento encontrado.</div>}</div>{show&&<TransactionModal onClose={()=>setShow(false)} onSaved={()=>{setShow(false);load()}}/>}{editing&&<EditTransactionModal item={editing} onClose={()=>setEditing(null)} onSaved={()=>{setEditing(null);load()}}/>}</section>}
+
+function EditTransactionModal({item,onClose,onSaved}:{item:Transaction;onClose:()=>void;onSaved:()=>void}){
+ const [accounts,setAccounts]=useState<Account[]>([]),[cats,setCats]=useState<Category[]>([]),[tipo,setTipo]=useState(item.tipo==='transferencia'?'despesa':item.tipo),[valor,setValor]=useState(String(item.valor).replace('.',',')),[descricao,setDescricao]=useState(item.descricao),[conta,setConta]=useState(item.conta_id||''),[cat,setCat]=useState(item.categoria_id||''),[date,setDate]=useState(item.data_movimento.slice(0,10)),[status,setStatus]=useState(item.status||'pago'),[error,setError]=useState(''),[saving,setSaving]=useState(false);
+ useEffect(()=>{Promise.all([api.accounts(),api.categories()]).then(([a,c])=>{setAccounts(a.filter(x=>x.ativa));setCats(c) }).catch(e=>setError(e instanceof Error?e.message:'Não foi possível carregar os dados'))},[]);
+ async function save(e:React.FormEvent){e.preventDefault();if(!conta)return setError('Selecione uma conta.');if(!descricao.trim())return setError('Informe uma descrição.');setSaving(true);try{await api.updateTransaction(item.id,{tipo,valor:Number(valor.replace(',','.')),descricao:descricao.trim(),conta_id:conta,categoria_id:cat||null,data_movimento:date,status});onSaved()}catch(e){setError(e instanceof Error?e.message:'Não foi possível editar o lançamento')}finally{setSaving(false)}}
+ return <Modal onClose={onClose}><span className="eyebrow">EDITAR LANÇAMENTO</span><h3>Corrigir lançamento</h3><form onSubmit={save}><div className="type-toggle"><button type="button" className={tipo==='despesa'?'selected':''} onClick={()=>setTipo('despesa')}>Despesa</button><button type="button" className={tipo==='receita'?'selected':''} onClick={()=>setTipo('receita')}>Receita</button></div><label>Descrição<input required value={descricao} onChange={e=>setDescricao(e.target.value)}/></label><label>Valor<input inputMode="decimal" required value={valor} onChange={e=>setValor(e.target.value)}/></label><label>Categoria<select value={cat} onChange={e=>setCat(e.target.value)}><option value="">Sem categoria</option>{cats.filter(c=>c.tipo===tipo).map(c=><option key={c.id} value={c.id}>{c.nome}</option>)}</select></label><label>Conta<select required value={conta} onChange={e=>setConta(e.target.value)}><option value="">Selecione</option>{accounts.map(a=><option key={a.id} value={a.id}>{a.nome}</option>)}</select></label><label>Data<input type="date" value={date} onChange={e=>setDate(e.target.value)} required/></label><label>Status<select value={status} onChange={e=>setStatus(e.target.value)}><option value="pago">Pago</option><option value="pendente">Pendente</option><option value="cancelado">Cancelado</option></select></label>{error&&<div className="form-error">{error}</div>}<div className="confirm-actions"><button type="button" className="soft-btn" onClick={onClose}>Cancelar</button><button className="primary-btn" disabled={saving}>{saving?'Salvando...':'Salvar alterações'}<Check size={16}/></button></div></form></Modal>}
+
+'''
+          s=s[:start]+block+s[end:]
+
+          # Mascot: interactive 3D-style presentation with reactions and contextual messages.
+          start=s.find('function MascotBubble({mascot,page}')
+          end=s.find('function PageHeader(',start)
+          if start<0 or end<0: raise SystemExit('mascot bubble markers not found')
+          mascot=r'''function MascotBubble({mascot,page}:{mascot:Mascot;page:Page}){const [open,setOpen]=useState(false),[reaction,setReaction]=useState<'idle'|'happy'|'thinking'|'celebrate'|'care'>('idle');const text=page==='inicio'?mascot.intro:page==='lancamentos'?'Vamos olhando lançamento por lançamento. Assim o saldo fica claro.':page==='recorrencias'?'Eu só considero um compromisso realizado quando você confirma.':page==='cartoes'?'Compras parceladas ficam visíveis como compromissos futuros.':page==='investimentos'?'Patrimônio investido e dinheiro disponível são coisas diferentes.':page==='metas'?'Cada pequeno avanço conta. Vamos no seu ritmo.':page==='agenda'?'Aqui ficam os próximos compromissos para você não ser pego de surpresa.':page==='contas'?'Cada conta tem seu próprio lugar e saldo.':page==='dividas'?'Vamos acompanhar os compromissos sem misturar dívida com gasto do dia a dia.':'Estou por aqui para ajudar, sem julgamentos.';const react=()=>{const next=reaction==='idle'?'happy':reaction==='happy'?'thinking':reaction==='thinking'?'celebrate':reaction==='celebrate'?'care':'idle';setReaction(next);setOpen(true);window.setTimeout(()=>setReaction('idle'),1600)};return <div className={`mascot-float mascot-${reaction}`}><button className="mascot-3d" aria-label={`Falar com ${mascot.name}`} onClick={react}><span className="mascot-shadow"/><span className="mascot-orb">{mascot.emoji}</span><span className="mascot-spark">✦</span></button>{open&&<div className="mascot-pop mascot-pop-3d"><div className="mascot-pop-head"><span>{mascot.name}</span><button onClick={()=>setOpen(false)}><X size={14}/></button></div><p>{text}</p><div className="mascot-reaction">{reaction==='happy'?'😊 Feliz':reaction==='thinking'?'🤔 Pensando':reaction==='celebrate'?'✨ Comemorando':reaction==='care'?'🤍 Cuidando':'👋 Olá'}</div></div>}</div>}
+
+'''
+          s=s[:start]+mascot+s[end:]
+
+          # Transaction type fields.
+          p2=Path('frontend/src/api.ts'); a=p2.read_text();
+          a=a.replace("export type Transaction={id:string;tipo:'receita'|'despesa'|'transferencia';valor:number;descricao:string;data_movimento:string;status:string;conta_nome?:string;categoria_nome?:string;forma_pagamento?:string};","export type Transaction={id:string;tipo:'receita'|'despesa'|'transferencia';valor:number;descricao:string;data_movimento:string;status:string;conta_id?:string;categoria_id?:string;conta_nome?:string;categoria_nome?:string;forma_pagamento?:string;observacao?:string};")
+          a=a.replace("createTransaction:(d:any)=>post('/lancamentos',d),","createTransaction:(d:any)=>post('/lancamentos',d),updateTransaction:(id:string,d:any)=>request<Transaction>(`/lancamentos/${id}`,{method:'PATCH',body:JSON.stringify(d)}),deleteTransaction:(id:string)=>request(`/lancamentos/${id}`,{method:'DELETE',body:JSON.stringify({})}),")
+          p2.write_text(a)
+          PY
+      - name: Improve mascot and transaction styling
+        run: |
+          cat >> frontend/src/styles.css <<'CSS'
+
+/* V5 interaction layer */
+.tx-actions{display:flex;align-items:center;gap:2px;margin-left:4px}.danger-icon{color:#a76357}.tx-actions .icon-btn{opacity:.62;transition:opacity .18s,transform .18s,background .18s}.transaction-row:hover .tx-actions .icon-btn,.tx-actions .icon-btn:focus{opacity:1}.tx-actions .icon-btn:hover{background:#f0ece4;transform:translateY(-1px)}
+.mascot-float{position:fixed;left:22px;bottom:22px;z-index:50;perspective:900px}.mascot-3d{position:relative;width:78px;height:78px;padding:0;border-radius:50%;background:transparent;transform-style:preserve-3d;filter:drop-shadow(0 12px 18px rgba(38,61,52,.18));transition:transform .25s}.mascot-3d:hover{transform:translateY(-4px) rotateY(-8deg) scale(1.04)}.mascot-orb{position:absolute;inset:5px;border-radius:48% 52% 54% 46%;display:grid;place-items:center;font-size:46px;background:radial-gradient(circle at 32% 25%,#fffdf7 0 12%,#f3eadc 28%,#d7cfc2 66%,#aaa398 100%);border:2px solid #fffaf0;box-shadow:inset -9px -12px 16px rgba(65,70,63,.16),inset 8px 7px 12px rgba(255,255,255,.8),0 7px 0 #a9a297;transform:translateZ(16px);animation:mascot-float 3.8s ease-in-out infinite}.mascot-shadow{position:absolute;width:58px;height:13px;left:10px;bottom:1px;border-radius:50%;background:rgba(55,70,62,.18);filter:blur(4px);transform:translateZ(-8px)}.mascot-spark{position:absolute;right:2px;top:1px;font-size:18px;color:#80a997;transform:translateZ(28px);animation:spark-pulse 1.8s ease-in-out infinite}.mascot-happy .mascot-orb{animation:mascot-hop .55s ease-in-out 2}.mascot-thinking .mascot-orb{transform:translateZ(16px) rotateY(14deg) rotateZ(-3deg)}.mascot-celebrate .mascot-orb{animation:mascot-celebrate .55s ease-in-out 3}.mascot-care .mascot-orb{filter:saturate(.85);animation:mascot-care .8s ease-in-out 2}.mascot-pop-3d{transform:translateY(-6px);box-shadow:0 20px 45px rgba(48,64,57,.16)}.mascot-reaction{font-size:10px;color:#668078;background:#f1eee7;border-radius:9px;padding:6px 8px;display:inline-block;margin-top:2px}@keyframes mascot-float{0%,100%{transform:translateZ(16px) translateY(0) rotateY(-3deg)}50%{transform:translateZ(16px) translateY(-5px) rotateY(3deg)}}@keyframes mascot-hop{50%{transform:translateZ(24px) translateY(-12px) rotateZ(-5deg)}}@keyframes mascot-celebrate{25%{transform:translateZ(30px) translateY(-10px) rotateZ(-8deg)}50%{transform:translateZ(30px) translateY(-15px) rotateZ(8deg)}75%{transform:translateZ(30px) translateY(-8px) rotateZ(-5deg)}}@keyframes mascot-care{50%{transform:translateZ(20px) scale(.96) rotateZ(3deg)}}
+@media(max-width:700px){.mascot-float{left:14px;bottom:78px}.mascot-3d{width:66px;height:66px}.mascot-orb{font-size:38px}.tx-actions .icon-btn{width:32px;height:32px}.transaction-row{gap:7px}}
+CSS
+      - name: Commit feature
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/app.ts frontend/src/api.ts frontend/src/main.tsx frontend/src/styles.css
+          git diff --cached --quiet && exit 0
+          git commit -m "feat: editar excluir lancamentos e mascote 3D interativo [skip ci]"
+          git push
