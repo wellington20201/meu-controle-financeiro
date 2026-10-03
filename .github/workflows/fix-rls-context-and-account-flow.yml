@@ -1,0 +1,43 @@
+name: Fix RLS request context and account flow
+on:
+  workflow_dispatch:
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch backend RLS request context
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('backend/src/app.ts')
+          s=p.read_text()
+          old="""  app.addHook('preHandler',async(req,rep)=>{\n    const requestPath=req.url.split('?')[0];\n    if(publicPaths.has(requestPath) || requestPath.startsWith('/api/')===false || req.method==='OPTIONS') return;\n    await authenticate(req,rep);\n    await requireCsrf(req);\n    securityContext.enterWith({ userId: (req as any).userId });\n  });"""
+          new="""  app.addHook('onRequest',(req,rep,done)=>{\n    const requestPath=req.url.split('?')[0];\n    if(publicPaths.has(requestPath) || requestPath.startsWith('/api/')===false || req.method==='OPTIONS') return done();\n    (async()=>{\n      try{\n        await authenticate(req,rep);\n        await requireCsrf(req);\n        const uid=(req as any).userId as string;\n        securityContext.run({userId:uid},()=>done());\n      }catch(error){ done(error as Error); }\n    })();\n  });"""
+          if old not in s:
+              raise SystemExit('backend hook block not found')
+          p.write_text(s.replace(old,new))
+          PY
+      - name: Patch launch form for empty accounts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('frontend/src/main.tsx')
+          s=p.read_text()
+          old="""<label>Conta<select required value={conta} onChange={e=>setConta(e.target.value)}>{accounts.map(a=><option key={a.id} value={a.id}>{a.nome}</option>)}</select></label>"""
+          new="""<label>Conta<select required value={conta} onChange={e=>setConta(e.target.value)} disabled={!accounts.length}><option value=\"\">{accounts.length?'Selecione a conta':'Nenhuma conta cadastrada'}</option>{accounts.map(a=><option key={a.id} value={a.id}>{a.nome}</option>)}</select>{!accounts.length&&<small className=\"field-hint\">Cadastre uma conta primeiro em <strong>Contas</strong>. Depois ela aparecerá aqui automaticamente.</small>}</label>"""
+          if old not in s:
+              raise SystemExit('launch account select block not found')
+          p.write_text(s.replace(old,new))
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/app.ts frontend/src/main.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: RLS e fluxo de conta no lançamento [skip ci]"
+          git push
