@@ -10,10 +10,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Restaurar app e corrigir cadastro
         shell: bash
         run: |
           set -euo pipefail
+          git fetch --all --tags --prune
           git checkout 8b8bcc0e19e7502f0309e67a8f9385c2ad03732f -- backend/src/app.ts
           python3 - <<'PY'
           from pathlib import Path
@@ -33,12 +36,11 @@ jobs:
           from pathlib import Path
           p=Path('backend/src/app.ts')
           s=p.read_text()
-          s=s.replace("const money=(v:any)=>Math.round(n(v)*100)/100;", "const money=(v:any)=>Math.round(n(v)*100)/100;\nconst brl=(v:any)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(n(v));")
           s=s.replace("if(error.message==='UNAUTHORIZED')", "if((error as any).message==='UNAUTHORIZED')")
-          s=s.replace("if(error.message==='CSRF_INVALID')", "if((error as any).message==='CSRF_INVALID'")
+          s=s.replace("if(error.message==='CSRF_INVALID')", "if((error as any).message==='CSRF_INVALID')")
           s=s.replace("securityContext.enterWith({ userId: req.userId });", "securityContext.enterWith({ userId: (req as any).userId });")
           s=s.replace("const notas=[];", "const notas:any[]=[];")
-          s=s.replace("const base=Math.round((total/parcelas)*100)/100;const first=new Date(`${b.data_compra}T12:00:00`);const preview=[];", "const base=Math.round((total/parcelas)*100)/100;const first=new Date(`${b.data_compra}T12:00:00`);const preview:any[]=[];")
+          s=s.replace("const preview=[];", "const preview:any[]=[];")
           p.write_text(s)
           PY
           cat > backend/src/fastify-user.d.ts <<'EOF'
