@@ -18,8 +18,6 @@ WORKDIR /src/backend
 COPY backend/package*.json ./
 RUN npm install --no-audit --no-fund
 COPY backend/ ./
-COPY ops/apply-rls-context-fix.mjs /tmp/apply-rls-context-fix.mjs
-RUN node /tmp/apply-rls-context-fix.mjs
 RUN npm run build
 
 FROM node:22-alpine
