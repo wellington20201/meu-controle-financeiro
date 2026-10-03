@@ -5,8 +5,10 @@ COPY frontend/package*.json ./
 RUN npm install --no-audit --no-fund
 COPY frontend/ ./
 COPY ops/apply-reference-ui.mjs /tmp/apply-reference-ui.mjs
+COPY ops/apply-fix-transaction-confirmation.mjs /tmp/apply-fix-transaction-confirmation.mjs
 COPY frontend/src/reference-ui.css ./src/reference-ui.css
 RUN node /tmp/apply-reference-ui.mjs
+RUN node /tmp/apply-fix-transaction-confirmation.mjs
 ARG VITE_API_URL=/api
 ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
