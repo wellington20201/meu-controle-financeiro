@@ -1,6 +1,7 @@
 name: Fix RLS request context and account flow
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
 
 jobs:
   patch:
