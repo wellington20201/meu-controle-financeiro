@@ -21,8 +21,7 @@ const ordered = [
   'v37_investimentos.sql',
   'v39_dividas.sql',
   'v49_assistente_historico.sql',
-  'v50_compatibilidade_schema.sql',
-  'v51_default_account.sql'
+  'v50_compatibilidade_schema.sql'
 ];
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL não configurada');
