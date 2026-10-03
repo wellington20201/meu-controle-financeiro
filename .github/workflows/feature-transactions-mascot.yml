@@ -10,6 +10,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Normalize patch script
+        run: sed -i 's/^ p\.write_text(s)$/p.write_text(s)/' ops/apply-feature-transactions-mascot.py
       - name: Apply feature patch
         run: python ops/apply-feature-transactions-mascot.py
       - name: Commit feature
