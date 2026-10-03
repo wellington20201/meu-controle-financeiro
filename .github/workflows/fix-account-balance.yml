@@ -1,0 +1,34 @@
+name: Fix account balance
+on:
+  push:
+    branches: [main]
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch account balance calculation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('backend/src/app.ts')
+          s=p.read_text()
+          start=s.find("  app.get('/api/contas',async(req:any)=>{")
+          end=s.find("  app.post('/api/contas',async(req:any,rep)=>{", start)
+          if start<0 or end<0:
+              raise SystemExit('accounts route markers not found')
+          new="""  app.get('/api/contas',async(req:any)=>{\n    const id=userId(req);\n    const rows=(await query(`\n      SELECT c.id,c.nome,c.tipo,c.saldo_inicial,c.ativa,\n        COALESCE((SELECT SUM(CASE WHEN l.tipo='receita' THEN l.valor WHEN l.tipo='despesa' THEN -l.valor ELSE 0 END)\n                  FROM lancamentos l\n                  WHERE l.conta_id=c.id AND l.usuario_id=$1 AND l.status='pago' AND l.forma_pagamento <> 'transferencia'),0)\n        + COALESCE((SELECT SUM(CASE WHEN t.conta_destino_id=c.id THEN t.valor WHEN t.conta_origem_id=c.id THEN -t.valor ELSE 0 END)\n                    FROM transferencias t\n                    WHERE t.usuario_id=$1 AND (t.conta_destino_id=c.id OR t.conta_origem_id=c.id)),0) AS saldo_movimentacoes\n      FROM contas c\n      WHERE c.usuario_id=$1\n      GROUP BY c.id\n      ORDER BY c.ativa DESC,c.nome`,[id])).rows;\n    return rows.map(x=>({...x,saldo_inicial:n(x.saldo_inicial),saldo_atual:money(n(x.saldo_inicial)+n(x.saldo_movimentacoes))}));\n  });\n\n"""
+          p.write_text(s[:start]+new+s[end:])
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/app.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: saldo da conta acompanha os lancamentos pagos [skip ci]"
+          git push
