@@ -1,18 +1,30 @@
 name: Corrigir build V5.2
-
 on:
   push:
     branches: [main]
-
 permissions:
   contents: write
-
 jobs:
   fix:
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Restaurar app e corrigir cadastro
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout 8b8bcc0e19e7502f0309e67a8f9385c2ad03732f -- backend/src/app.ts
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('backend/src/app.ts')
+          s=p.read_text()
+          old='''    const hash=await hashPassword(password);\n    const r=await query(`INSERT INTO usuarios(email,senha_hash,nome,mascote_id) VALUES($1,$2,$3,'bento') RETURNING id,email,nome,moeda,mascote_id`,[emailNorm,hash,nome||null]);\n    await query(`INSERT INTO consentimentos_privacidade(usuario_id,versao_politica,tipo,aceito,ip,user_agent) VALUES($1,'1.0','politica_privacidade',true,$2,$3)`,[r.rows[0].id,req.ip??null,req.headers['user-agent']?.slice(0,500)??null]);\n    const session=await createSession(r.rows[0].id,req); setSessionCookie(rep,session.token);\n    await audit(req,'CONTA_CRIADA',true,r.rows[0].id);\n    return rep.code(201).send({user:r.rows[0]});'''
+          new='''    const hash=await hashPassword(password);\n    const client=await pool.connect();\n    let createdUser:any;\n    try{\n      await client.query('BEGIN');\n      const r=await client.query(`INSERT INTO usuarios(email,senha_hash,nome,mascote_id) VALUES($1,$2,$3,'bento') RETURNING id,email,nome,moeda,mascote_id`,[emailNorm,hash,nome||null]);\n      createdUser=r.rows[0];\n      await client.query(`SELECT set_config('app.user_id',$1,true)`,[createdUser.id]);\n      await client.query(`INSERT INTO consentimentos_privacidade(usuario_id,versao_politica,tipo,aceito,ip,user_agent) VALUES($1,'1.0','politica_privacidade',true,$2,$3)`,[createdUser.id,req.ip??null,req.headers['user-agent']?.slice(0,500)??null]);\n      await client.query(`INSERT INTO auditoria_seguranca(usuario_id,evento,sucesso,ip,user_agent,detalhes) VALUES($1,'CONTA_CRIADA',true,$2,$3,$4)`,[createdUser.id,req.ip??null,req.headers['user-agent']?.slice(0,500)??null,{}]);\n      await client.query('COMMIT');\n    }catch(error){\n      await client.query('ROLLBACK').catch(()=>undefined);\n      throw error;\n    }finally{client.release();}\n    const session=await createSession(createdUser.id,req); setSessionCookie(rep,session.token);\n    return rep.code(201).send({user:createdUser});'''
+          if old not in s:
+              raise SystemExit('cadastro block not found')
+          p.write_text(s.replace(old,new,1))
+          PY
       - name: Aplicar correções de compilação
         shell: bash
         run: |
@@ -23,7 +35,7 @@ jobs:
           s=p.read_text()
           s=s.replace("const money=(v:any)=>Math.round(n(v)*100)/100;", "const money=(v:any)=>Math.round(n(v)*100)/100;\nconst brl=(v:any)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(n(v));")
           s=s.replace("if(error.message==='UNAUTHORIZED')", "if((error as any).message==='UNAUTHORIZED')")
-          s=s.replace("if(error.message==='CSRF_INVALID')", "if((error as any).message==='CSRF_INVALID')")
+          s=s.replace("if(error.message==='CSRF_INVALID')", "if((error as any).message==='CSRF_INVALID'")
           s=s.replace("securityContext.enterWith({ userId: req.userId });", "securityContext.enterWith({ userId: (req as any).userId });")
           s=s.replace("const notas=[];", "const notas:any[]=[];")
           s=s.replace("const base=Math.round((total/parcelas)*100)/100;const first=new Date(`${b.data_compra}T12:00:00`);const preview=[];", "const base=Math.round((total/parcelas)*100)/100;const first=new Date(`${b.data_compra}T12:00:00`);const preview:any[]=[];")
@@ -54,5 +66,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add backend/src/app.ts backend/src/fastify-user.d.ts backend/tsconfig.json
-          git commit -m 'fix: backend V5.2 compila no TypeScript [skip ci]' || exit 0
+          git commit -m 'fix: cadastro atomico e RLS [skip ci]' || exit 0
           git push
