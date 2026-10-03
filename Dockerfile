@@ -1,9 +1,12 @@
-# Meu Controle Financeiro V5.2 — aplicação única
+# Meu Controle Financeiro V5.3 — aplicação única
 FROM node:22-alpine AS frontend-build
 WORKDIR /src/frontend
 COPY frontend/package*.json ./
 RUN npm install --no-audit --no-fund
 COPY frontend/ ./
+COPY ops/apply-reference-ui.mjs /tmp/apply-reference-ui.mjs
+COPY frontend/src/reference-ui.css ./src/reference-ui.css
+RUN node /tmp/apply-reference-ui.mjs
 ARG VITE_API_URL=/api
 ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
