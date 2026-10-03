@@ -6,6 +6,7 @@ RUN npm install --no-audit --no-fund
 COPY frontend/ ./
 COPY ops/apply-reference-ui.mjs /tmp/apply-reference-ui.mjs
 COPY ops/apply-fix-transaction-confirmation.mjs /tmp/apply-fix-transaction-confirmation.mjs
+COPY ops/apply-balance-account-card-fixes.mjs /tmp/apply-balance-account-card-fixes.mjs
 COPY frontend/src/reference-ui.css ./src/reference-ui.css
 RUN node /tmp/apply-reference-ui.mjs
 RUN node /tmp/apply-fix-transaction-confirmation.mjs
@@ -19,7 +20,9 @@ COPY backend/package*.json ./
 RUN npm install --no-audit --no-fund
 COPY backend/ ./
 COPY ops/apply-rls-context-fix.mjs /tmp/apply-rls-context-fix.mjs
+COPY ops/apply-balance-account-card-fixes.mjs /tmp/apply-balance-account-card-fixes.mjs
 RUN node /tmp/apply-rls-context-fix.mjs
+RUN node /tmp/apply-balance-account-card-fixes.mjs
 RUN npm run build
 
 FROM node:22-alpine
