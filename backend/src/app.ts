@@ -302,11 +302,21 @@ export async function buildApp(){
   // Contas e lançamentos
   app.get('/api/contas',async(req:any)=>{
     const id=userId(req);
-    return (await query(`
-      SELECT c.*, COALESCE(SUM(CASE WHEN l.status='pago' AND l.tipo='receita' AND l.forma_pagamento <> 'transferencia' THEN l.valor WHEN l.status='pago' AND l.tipo='despesa' AND l.forma_pagamento <> 'transferencia' THEN -l.valor ELSE 0 END),0) AS saldo_atual
-      FROM contas c LEFT JOIN lancamentos l ON l.conta_id=c.id
-      WHERE c.usuario_id=$1 GROUP BY c.id ORDER BY c.ativa DESC,c.nome`,[id])).rows.map(x=>({...x,saldo_inicial:n(x.saldo_inicial),saldo_atual:money(n(x.saldo_inicial)+n(x.saldo_atual))}));
+    const rows=(await query(`
+      SELECT c.id,c.nome,c.tipo,c.saldo_inicial,c.ativa,
+        COALESCE((SELECT SUM(CASE WHEN l.tipo='receita' THEN l.valor WHEN l.tipo='despesa' THEN -l.valor ELSE 0 END)
+                  FROM lancamentos l
+                  WHERE l.conta_id=c.id AND l.usuario_id=$1 AND l.status='pago' AND l.forma_pagamento <> 'transferencia'),0)
+        + COALESCE((SELECT SUM(CASE WHEN t.conta_destino_id=c.id THEN t.valor WHEN t.conta_origem_id=c.id THEN -t.valor ELSE 0 END)
+                    FROM transferencias t
+                    WHERE t.usuario_id=$1 AND (t.conta_destino_id=c.id OR t.conta_origem_id=c.id)),0) AS saldo_movimentacoes
+      FROM contas c
+      WHERE c.usuario_id=$1
+      GROUP BY c.id
+      ORDER BY c.ativa DESC,c.nome`,[id])).rows;
+    return rows.map(x=>({...x,saldo_inicial:n(x.saldo_inicial),saldo_atual:money(n(x.saldo_inicial)+n(x.saldo_movimentacoes))}));
   });
+
   app.post('/api/contas',async(req:any,rep)=>{const id=userId(req),b=req.body||{};if(!b.nome)return rep.code(400).send({message:'Nome da conta é obrigatório'});const r=await query(`INSERT INTO contas(usuario_id,nome,tipo,saldo_inicial) VALUES($1,$2,$3,$4) RETURNING *`,[id,b.nome,b.tipo||'corrente',n(b.saldo_inicial)]);return rep.code(201).send(r.rows[0])});
   app.patch('/api/contas/:id',async(req:any)=>{const id=userId(req),b=req.body||{};const r=await query(`UPDATE contas SET nome=COALESCE($1,nome),tipo=COALESCE($2,tipo),ativa=COALESCE($3,ativa),atualizado_em=now() WHERE id=$4 AND usuario_id=$5 RETURNING *`,[b.nome,b.tipo,b.ativa,req.params.id,id]);return r.rows[0]});
   app.delete('/api/contas/:id',async(req:any)=>{const id=userId(req);await query(`UPDATE contas SET ativa=false,atualizado_em=now() WHERE id=$1 AND usuario_id=$2`,[req.params.id,id]);return {ok:true}});
