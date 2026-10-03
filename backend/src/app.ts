@@ -75,12 +75,17 @@ export async function buildApp(){
   });
 
   const publicPaths=new Set(['/api/auth/register','/api/auth/login','/api/auth/mfa/verify','/api/auth/recuperar-senha','/api/auth/redefinir-senha','/health','/health/database']);
-  app.addHook('preHandler',async(req,rep)=>{
+  app.addHook('onRequest',(req,rep,done)=>{
     const requestPath=req.url.split('?')[0];
-    if(publicPaths.has(requestPath) || requestPath.startsWith('/api/')===false || req.method==='OPTIONS') return;
-    await authenticate(req,rep);
-    await requireCsrf(req);
-    securityContext.enterWith({ userId: (req as any).userId });
+    if(publicPaths.has(requestPath) || requestPath.startsWith('/api/')===false || req.method==='OPTIONS') return done();
+    (async()=>{
+      try{
+        await authenticate(req,rep);
+        await requireCsrf(req);
+        const uid=(req as any).userId as string;
+        securityContext.run({userId:uid},()=>done());
+      }catch(error){ done(error as Error); }
+    })();
   });
 
   const audit=async(req:any,event:string,success=true,userId:string|null=null,details:any={})=>{
