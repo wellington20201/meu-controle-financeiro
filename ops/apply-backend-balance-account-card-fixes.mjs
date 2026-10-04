@@ -1,29 +1,16 @@
 import fs from 'node:fs';
+
 const appPath='/src/backend/src/app.ts';
 let app=fs.readFileSync(appPath,'utf8');
 
-// O cálculo anterior fazia JOIN entre contas e lançamentos e somava
-// saldo_inicial no mesmo conjunto. Assim, cada lançamento repetia o
-// saldo inicial da conta e o total crescia incorretamente.
+// Corrige o saldo do dashboard sem JOIN que multiplique o saldo inicial.
 const oldDashboard="query(`SELECT COALESCE(SUM(c.saldo_inicial),0)+COALESCE(SUM(CASE WHEN l.tipo='receita' AND l.status='pago' AND l.forma_pagamento <> 'transferencia' THEN l.valor WHEN l.tipo='despesa' AND l.status='pago' AND l.forma_pagamento <> 'transferencia' THEN -l.valor ELSE 0 END),0) saldo FROM contas c LEFT JOIN lancamentos l ON l.conta_id=c.id WHERE c.usuario_id=$1 AND c.ativa=true`,[id])";
 const fixedDashboard="query(`SELECT COALESCE(SUM(c.saldo_inicial),0)+COALESCE((SELECT SUM(CASE WHEN l.tipo='receita' AND l.status='pago' AND l.forma_pagamento <> 'transferencia' THEN l.valor WHEN l.tipo='despesa' AND l.status='pago' AND l.forma_pagamento <> 'transferencia' THEN -l.valor ELSE 0 END) FROM lancamentos l WHERE l.usuario_id=$1 AND l.conta_id IN (SELECT id FROM contas WHERE usuario_id=$1 AND ativa=true)),0) saldo FROM contas c WHERE c.usuario_id=$1 AND c.ativa=true`,[id])";
+
 if(app.includes(oldDashboard)) app=app.replace(oldDashboard,fixedDashboard);
 
-// Mantém a correção idempotente caso o dashboard já esteja materializado
-// pela versão anterior do script.
-const previousDashboard="query(`SELECT COALESCE(SUM(c.saldo_inicial),0)+COALESCE((SELECT SUM(CASE WHEN l.tipo='receita' AND l.status='pago' AND l.forma_pagamento <> 'transferencia' THEN l.valor WHEN l.tipo='despesa' AND l.status='pago' AND l.forma_pagamento <> 'transferencia' THEN -l.valor ELSE 0 END) FROM lancamentos l WHERE l.usuario_id=$1 AND l.conta_id IN (SELECT id FROM contas WHERE usuario_id=$1 AND ativa=true)),0) saldo FROM contas c WHERE c.usuario_id=$1 AND c.ativa=true`,[id])";
-if(!app.includes(previousDashboard)) throw new Error('dashboard balance query not found after normalization');
-
-const accountsMarker="      WHERE c.usuario_id=$1\n      GROUP BY c.id";
-if(app.includes(accountsMarker)) app=app.replace(accountsMarker,"      WHERE c.usuario_id=$1 AND c.ativa=true\n      GROUP BY c.id",1);
-
-const oldAccountPatch="app.patch('/api/contas/:id',async(req:any)=>{const id=userId(req),b=req.body||{};const r=await query(`UPDATE contas SET nome=COALESCE($1,nome),tipo=COALESCE($2,tipo),ativa=COALESCE($3,ativa),atualizado_em=now() WHERE id=$4 AND usuario_id=$5 RETURNING *`,[b.nome,b.tipo,b.ativa,req.params.id,id]);return r.rows[0]});";
-const newAccountPatch="app.patch('/api/contas/:id',async(req:any,rep)=>{const id=userId(req),b=req.body||{};const current=await query(`SELECT c.*,COALESCE((SELECT SUM(CASE WHEN l.status='pago' AND l.tipo='receita' AND l.forma_pagamento <> 'transferencia' THEN l.valor WHEN l.status='pago' AND l.tipo='despesa' AND l.forma_pagamento <> 'transferencia' THEN -l.valor ELSE 0 END) FROM lancamentos l WHERE l.conta_id=c.id AND l.usuario_id=$1),0) movimentacoes FROM contas c WHERE c.id=$2 AND c.usuario_id=$1`,[id,req.params.id]);if(!current.rowCount)return rep.code(404).send({message:'Conta não encontrada'});const x=current.rows[0];let saldoInicial=b.saldo_inicial===undefined?Number(x.saldo_inicial):n(b.saldo_inicial);if(b.saldo_atual!==undefined)saldoInicial=n(b.saldo_atual)-n(x.movimentacoes);const r=await query(`UPDATE contas SET nome=COALESCE($1,nome),tipo=COALESCE($2,tipo),saldo_inicial=$3,ativa=COALESCE($4,ativa),atualizado_em=now() WHERE id=$5 AND usuario_id=$6 RETURNING *`,[b.nome,b.tipo,saldoInicial,b.ativa,req.params.id,id]);return r.rows[0]});";
-if(app.includes(oldAccountPatch)) app=app.replace(oldAccountPatch,newAccountPatch);
-
-const oldCardPost="app.post('/api/cartoes',async(req:any,rep)=>{const id=userId(req),b=req.body||{};const r=await query(`INSERT INTO cartoes(usuario_id,nome,banco,limite,dia_fechamento,dia_vencimento) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[id,b.nome,b.banco||null,b.limite===''?null:n(b.limite),b.dia_fechamento||null,b.dia_vencimento||null]);return rep.code(201).send(r.rows[0])});";
-const newCardPost="app.post('/api/cartoes',async(req:any,rep)=>{const id=userId(req),b=req.body||{};if(!b.nome)return rep.code(400).send({message:'Nome do cartão é obrigatório'});const r=await query(`INSERT INTO cartoes(usuario_id,nome,banco,limite,dia_fechamento,dia_vencimento) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[id,b.nome,b.banco||null,b.limite===''?null:n(b.limite),b.dia_fechamento||null,b.dia_vencimento||null]);return rep.code(201).send(r.rows[0]});\n  app.patch('/api/cartoes/:id',async(req:any,rep)=>{const id=userId(req),b=req.body||{};const r=await query(`UPDATE cartoes SET nome=COALESCE($1,nome),banco=COALESCE($2,banco),limite=CASE WHEN $3::text IS NULL THEN limite ELSE $3::numeric END,dia_fechamento=COALESCE($4,dia_fechamento),dia_vencimento=COALESCE($5,dia_vencimento),atualizado_em=now() WHERE id=$6 AND usuario_id=$7 AND ativo=true RETURNING *`,[b.nome,b.banco,b.limite===undefined?null:(b.limite===''?null:n(b.limite)),b.dia_fechamento,b.dia_vencimento,req.params.id,id]);if(!r.rowCount)return rep.code(404).send({message:'Cartão não encontrado'});return r.rows[0]});\n  app.delete('/api/cartoes/:id',async(req:any,rep)=>{const id=userId(req);const r=await query(`UPDATE cartoes SET ativo=false,atualizado_em=now() WHERE id=$1 AND usuario_id=$2 RETURNING id`,[req.params.id,id]);if(!r.rowCount)return rep.code(404).send({message:'Cartão não encontrado'});return {ok:true}});";
-if(app.includes(oldCardPost)) app=app.replace(oldCardPost,newCardPost);
+const alreadyFixed="COALESCE((SELECT SUM(CASE WHEN l.tipo='receita' AND l.status='pago' AND l.forma_pagamento <> 'transferencia' THEN l.valor WHEN l.tipo='despesa' AND l.status='pago' AND l.forma_pagamento <> 'transferencia' THEN -l.valor ELSE 0 END) FROM lancamentos l WHERE l.usuario_id=$1 AND l.conta_id IN (SELECT id FROM contas WHERE usuario_id=$1 AND ativa=true)),0) saldo";
+if(!app.includes(alreadyFixed)) throw new Error('dashboard balance query not found after normalization');
 
 fs.writeFileSync(appPath,app);
-console.log('Backend balance/account/card fixes applied');
+console.log('Backend dashboard balance fix applied');
