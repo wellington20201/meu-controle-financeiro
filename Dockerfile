@@ -7,10 +7,12 @@ COPY frontend/ ./
 COPY ops/apply-reference-ui.mjs /tmp/apply-reference-ui.mjs
 COPY ops/apply-fix-transaction-confirmation.mjs /tmp/apply-fix-transaction-confirmation.mjs
 COPY ops/apply-frontend-balance-account-card-fixes.mjs /tmp/apply-frontend-balance-account-card-fixes.mjs
+COPY ops/apply-visual-mascot-layout-fix.mjs /tmp/apply-visual-mascot-layout-fix.mjs
 COPY frontend/src/reference-ui.css ./src/reference-ui.css
 RUN node /tmp/apply-reference-ui.mjs
 RUN node /tmp/apply-fix-transaction-confirmation.mjs
 RUN node /tmp/apply-frontend-balance-account-card-fixes.mjs
+RUN node /tmp/apply-visual-mascot-layout-fix.mjs
 ARG VITE_API_URL=/api
 ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
