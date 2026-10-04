@@ -40,6 +40,36 @@ jobs:
           rm -rf ./__MACOSX
           rm -rf /tmp/mcf
 
+      - name: Reaplicar correção de saldo das despesas
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ops
+          cat > ops/apply-immediate-expense-balance-fix.mjs <<'EOF'
+          import fs from 'node:fs';
+          const appPath='/src/backend/src/app.ts';
+          let app=fs.readFileSync(appPath,'utf8');
+          const oldText="b.status||'pago'";
+          const newText="b.tipo==='despesa'?'pago':(b.status||'pago')";
+          if(!app.includes(oldText) && !app.includes(newText)) throw new Error('transaction status expression not found');
+          app=app.replace(oldText,newText);
+          fs.writeFileSync(appPath,app);
+          EOF
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('Dockerfile')
+          s=p.read_text()
+          marker='COPY ops/apply-backend-balance-account-card-fixes.mjs /tmp/apply-backend-balance-account-card-fixes.mjs'
+          extra='COPY ops/apply-immediate-expense-balance-fix.mjs /tmp/apply-immediate-expense-balance-fix.mjs'
+          run_marker='RUN node /tmp/apply-backend-balance-account-card-fixes.mjs'
+          run_extra='RUN node /tmp/apply-immediate-expense-balance-fix.mjs'
+          if extra not in s:
+              s=s.replace(marker, marker+'\n'+extra)
+          if run_extra not in s:
+              s=s.replace(run_marker, run_marker+'\n'+run_extra)
+          p.write_text(s)
+          PY
+
       - name: Verificar estrutura
         shell: bash
         run: |
@@ -51,15 +81,17 @@ jobs:
           test -d database
           test -f frontend/package.json
           test -f backend/package.json
-          echo 'Estrutura V5.2 materializada com sucesso.'
+          test -f ops/apply-immediate-expense-balance-fix.mjs
+          grep -q 'apply-immediate-expense-balance-fix' Dockerfile
+          echo 'Estrutura V5.2 materializada com correção de saldo imediato das despesas.'
 
       - name: Commit da materialização
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.email '41898282+users.noreply.github.com'
           git add -A
           git status --short
-          git commit -m 'chore: materializa V5.2 [skip ci]' || echo 'Nenhuma alteração para commitar.'
+          git commit -m 'chore: materializa V5.2 com correção de saldo [skip ci]' || echo 'Nenhuma alteração para commitar.'
           git push
