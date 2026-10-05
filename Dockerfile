@@ -4,6 +4,8 @@ WORKDIR /src/frontend
 COPY frontend/package*.json ./
 RUN npm install --no-audit --no-fund
 COPY frontend/ ./
+COPY ops/apply-frontend-stability-fixes.mjs /tmp/apply-frontend-stability-fixes.mjs
+RUN node /tmp/apply-frontend-stability-fixes.mjs
 ARG VITE_API_URL=/api
 ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
