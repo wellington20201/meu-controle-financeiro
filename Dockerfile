@@ -6,6 +6,8 @@ RUN npm install --no-audit --no-fund
 COPY frontend/ ./
 COPY ops/apply-frontend-stability-fixes.mjs /tmp/apply-frontend-stability-fixes.mjs
 RUN node /tmp/apply-frontend-stability-fixes.mjs
+COPY ops/apply-frontend-final-stability-fix.mjs /tmp/apply-frontend-final-stability-fix.mjs
+RUN node /tmp/apply-frontend-final-stability-fix.mjs
 ARG VITE_API_URL=/api
 ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
