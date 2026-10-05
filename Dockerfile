@@ -18,9 +18,11 @@ COPY backend/ ./
 COPY ops/apply-rls-context-fix.mjs /tmp/apply-rls-context-fix.mjs
 COPY ops/apply-backend-balance-account-card-fixes.mjs /tmp/apply-backend-balance-account-card-fixes.mjs
 COPY ops/apply-immediate-expense-balance-fix.mjs /tmp/apply-immediate-expense-balance-fix.mjs
+COPY ops/apply-transaction-crud-fix.mjs /tmp/apply-transaction-crud-fix.mjs
 RUN node /tmp/apply-rls-context-fix.mjs
 RUN node /tmp/apply-backend-balance-account-card-fixes.mjs
 RUN node /tmp/apply-immediate-expense-balance-fix.mjs
+RUN node /tmp/apply-transaction-crud-fix.mjs
 RUN npm run build
 
 FROM node:22-alpine
